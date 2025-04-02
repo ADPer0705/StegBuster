@@ -27,17 +27,42 @@ StegBuster requires Python 3.6+ and the following libraries:
 - Pillow (PIL)
 - python-magic
 
-You can install the required dependencies with:
+### Automated Setup
 
+The easiest way to set up the environment is to use the provided setup scripts:
+
+#### On Linux/macOS:
 ```bash
-pip install numpy scipy pillow opencv-python python-magic
-```
-
-### Clone the Repository
-
-```bash
+# Clone the repository
 git clone https://github.com/yourusername/stegbuster.git
 cd stegbuster
+
+# Make the setup script executable
+chmod +x setup.sh
+
+# Run the setup script
+./setup.sh
+
+# Activate the virtual environment
+source venv/bin/activate
+```
+
+#### On Windows:
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/stegbuster.git
+cd stegbuster
+
+# Run the setup script
+setup.bat
+```
+
+### Manual Setup
+
+If you prefer to set up manually, you can install the dependencies with:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ## Usage
