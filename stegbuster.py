@@ -3,6 +3,34 @@
 import argparse
 import os
 import sys
+import importlib.util
+
+def check_dependencies():
+    """Check if all required dependencies are installed"""
+    dependencies = {
+        "numpy": "numpy",
+        "scipy": "scipy",
+        "PIL": "pillow",
+        "cv2": "opencv-python",
+        "magic": "python-magic"
+    }
+    
+    missing = []
+    for module, package in dependencies.items():
+        if importlib.util.find_spec(module) is None:
+            missing.append(f"{module} ({package})")
+    
+    if missing:
+        print("Warning: The following required dependencies are missing:")
+        for pkg in missing:
+            print(f"  - {pkg}")
+        print("\nTo install all dependencies, run: pip install -r requirements.txt")
+        print("Some functionality may be limited.")
+        print()
+
+# Run dependency check at startup
+check_dependencies()
+
 from detectors.detector_factory import get_detector
 from utils.file_utils import identify_file_type
 
