@@ -2,6 +2,7 @@ import numpy as np
 from scipy.io import wavfile
 from scipy.fftpack import fft
 from detectors.base_detector import BaseSteganographyDetector
+from utils.statistical_analysis import chi_square_attack_lsb, sample_pair_analysis, rs_analysis, perform_detailed_analysis
 
 class AudioSteganographyDetector(BaseSteganographyDetector):
     """
@@ -56,10 +57,28 @@ class AudioSteganographyDetector(BaseSteganographyDetector):
                 # Use the first channel for simplicity
                 data = data[:, 0]
             
-            # Extract LSBs
-            lsb = data & 1
+            # Use advanced chi-square attack
+            chi2_stat, p_value, is_stego_likely = chi_square_attack_lsb(data, sample_size=10000)
             
-            # Check if the LSB distribution is suspicious
+            # Use Sample Pair Analysis as a secondary method
+            spa_rate = sample_pair_analysis(data, sample_size=10000)
+            
+            # Use RS Analysis as a third method (adapted for audio)
+            rs_rate, _, _, _, _, _ = rs_analysis(data, sample_size=1000)
+            
+            # Combine results for more accurate detection
+            # Consider it positive if any two methods indicate steganography
+            detection_count = sum([
+                1 if is_stego_likely else 0,
+                1 if spa_rate > 0.3 else 0,  # 30% embedding rate threshold for SPA
+                1 if rs_rate > 0.2 else 0    # 20% embedding rate threshold for RS
+            ])
+            
+            if detection_count >= 2:  # At least 2 methods detect steganography
+                return True
+                
+            # Additional check for LSB distribution as a fallback
+            lsb = data & 1
             zero_count = np.sum(lsb == 0)
             one_count = np.sum(lsb == 1)
             total_samples = len(data)
@@ -67,20 +86,7 @@ class AudioSteganographyDetector(BaseSteganographyDetector):
             zero_ratio = zero_count / total_samples
             one_ratio = one_count / total_samples
             
-            # If the distribution is too skewed, it might indicate steganography
             if abs(zero_ratio - 0.5) > 0.05 or abs(one_ratio - 0.5) > 0.05:
-                return True
-                
-            # Check for patterns in LSBs
-            # Calculate differences between adjacent LSBs
-            diff = np.abs(np.diff(lsb))
-            changes = np.sum(diff)
-            
-            # Calculate expected number of changes for random data
-            expected_changes = total_samples * 0.5
-            
-            # If there are significantly fewer changes than expected, it might be steganography
-            if changes < expected_changes * 0.4:
                 return True
                 
             return False
@@ -88,6 +94,68 @@ class AudioSteganographyDetector(BaseSteganographyDetector):
         except Exception as e:
             print(f"Error in audio LSB detection: {e}")
             return False
+
+    def perform_detailed_analysis(self, file_path):
+        """
+        Perform detailed steganalysis on the audio file
+        Returns a dictionary with analysis results
+        """
+        try:
+            # Read the audio file
+            sample_rate, data = wavfile.read(file_path)
+            
+            # Handle multi-channel audio
+            results = {}
+            
+            if len(data.shape) > 1:
+                # Process each channel
+                num_channels = data.shape[1]
+                for i in range(num_channels):
+                    channel_data = data[:, i]
+                    results[f"Channel_{i+1}"] = perform_detailed_analysis(channel_data)
+            else:
+                # Single channel
+                results["Channel_1"] = perform_detailed_analysis(data)
+            
+            # Combine channel results for an overall assessment
+            combined_votes = sum(channel_data['overall']['detection_votes'] for channel_data in results.values())
+            max_votes = 3 * len(results)  # 3 methods × number of channels
+            
+            results['combined'] = {
+                'is_stego_likely': combined_votes >= max_votes / 2,
+                'confidence': combined_votes / max_votes
+            }
+            
+            return results
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def _chi_square_attack(self, data):
+        """
+        Perform Chi-square attack to detect LSB steganography
+        """
+        try:
+            # Split data into even and odd indices
+            even_bins = data[::2] & 1
+            odd_bins = data[1::2] & 1
+            
+            # Count occurrences of 0s and 1s
+            even_counts = np.bincount(even_bins, minlength=2)
+            odd_counts = np.bincount(odd_bins, minlength=2)
+            
+            # Calculate Chi-square statistic
+            chi_square = 0
+            for i in range(2):
+                expected = (even_counts[i] + odd_counts[i]) / 2
+                if expected > 0:
+                    chi_square += ((even_counts[i] - expected) ** 2) / expected
+                    chi_square += ((odd_counts[i] - expected) ** 2) / expected
+            
+            return chi_square
+        except Exception as e:
+            print(f"Error in Chi-square attack: {e}")
+            return 0
     
     def _extract_lsb_audio(self, file_path):
         """

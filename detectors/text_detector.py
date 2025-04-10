@@ -18,6 +18,8 @@ class TextSteganographyDetector(BaseSteganographyDetector):
             return "Zero-Width Characters"
         if self._detect_lexical_steg(file_path):
             return "Lexical"
+        if self._detect_lsb_steg(file_path):
+            return "LSB"
         return None
     
     def extract(self, file_path, method=None):
@@ -37,6 +39,11 @@ class TextSteganographyDetector(BaseSteganographyDetector):
                 
         if method == "Lexical" or not method:
             data = self._extract_lexical_steg(file_path)
+            if data:
+                return data
+            
+        if method == "LSB" or not method:
+            data = self._extract_lsb_steg(file_path)
             if data:
                 return data
                 
@@ -119,18 +126,22 @@ class TextSteganographyDetector(BaseSteganographyDetector):
                 for line in lines:
                     words = line.split()
                     for i in range(len(words) - 1):
-                        gap = re.search(r'(\s+)', line)
-                        if gap:
-                            if gap.group(1) == ' ':
-                                bits.append(0)
-                            elif gap.group(1) == '\t':
-                                bits.append(1)
-                            elif gap.group(1) == '  ':  # Double space
-                                bits.append(0)
-                                bits.append(0)
-                            elif gap.group(1) == ' \t':  # Space tab
-                                bits.append(0)
-                                bits.append(1)
+                        # Find all whitespace between words
+                        if i < len(words) - 1:
+                            word_end_pos = line.find(words[i]) + len(words[i])
+                            next_word_pos = line.find(words[i+1], word_end_pos)
+                            if next_word_pos > word_end_pos:
+                                gap = line[word_end_pos:next_word_pos]
+                                if gap == ' ':
+                                    bits.append(0)
+                                elif gap == '\t':
+                                    bits.append(1)
+                                elif gap == '  ':  # Double space
+                                    bits.append(0)
+                                    bits.append(0)
+                                elif gap == ' \t':  # Space tab
+                                    bits.append(0)
+                                    bits.append(1)
             
             # Convert bits to bytes
             bytes_data = bytearray()
@@ -293,6 +304,78 @@ class TextSteganographyDetector(BaseSteganographyDetector):
             
         except Exception as e:
             print(f"Error in lexical steganography extraction: {e}")
+            return None
+    
+    def _detect_lsb_steg(self, file_path):
+        """
+        Detect LSB steganography using chi-square statistical test
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Convert text to bytes
+            text_bytes = content.encode('utf-8')
+            
+            # Extract LSBs
+            lsbs = [byte & 1 for byte in text_bytes]
+            
+            # Count occurrences of 0 and 1
+            zero_count = lsbs.count(0)
+            one_count = lsbs.count(1)
+            
+            # Expected counts for random data
+            total = zero_count + one_count
+            expected = total / 2
+            
+            # Chi-square calculation
+            if expected > 0:
+                chi_square = ((zero_count - expected)**2 / expected) + ((one_count - expected)**2 / expected)
+                
+                # Chi-square critical value for p=0.05 with 1 degree of freedom is 3.84
+                # If chi_square > 3.84, the distribution is likely not random
+                return chi_square > 3.84
+                
+            return False
+            
+        except Exception as e:
+            print(f"Error in LSB steganography detection: {e}")
+            return False
+    
+    def _extract_lsb_steg(self, file_path):
+        """
+        Extract data hidden using LSB steganography
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Convert text to bytes
+            text_bytes = content.encode('utf-8')
+            
+            # Extract LSBs
+            lsbs = [byte & 1 for byte in text_bytes]
+            
+            # Convert bits to bytes
+            bytes_data = bytearray()
+            for i in range(0, len(lsbs), 8):
+                if i + 8 <= len(lsbs):
+                    byte = 0
+                    for j in range(8):
+                        byte |= lsbs[i + j] << (7 - j)
+                    bytes_data.append(byte)
+            
+            # Try to decode as ASCII
+            try:
+                message = bytes_data.decode('ascii')
+                if any(32 <= ord(c) <= 126 for c in message):
+                    return message
+                return None
+            except:
+                return bytes(bytes_data)
+                
+        except Exception as e:
+            print(f"Error in LSB steganography extraction: {e}")
             return None
     
     def _is_possibly_text(self, text):

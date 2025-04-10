@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 from detectors.base_detector import BaseSteganographyDetector
 from utils.file_utils import read_file_as_bytes
+from utils.statistical_analysis import chi_square_attack_lsb, sample_pair_analysis, rs_analysis, perform_detailed_analysis
 
 class ImageSteganographyDetector(BaseSteganographyDetector):
     """
@@ -48,48 +49,71 @@ class ImageSteganographyDetector(BaseSteganographyDetector):
             if img is None:
                 return False
             
-            # Convert to grayscale for simplicity
-            if len(img.shape) > 2:
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = img
+            # Process each color channel separately
+            channels = cv2.split(img)
+            stego_detected = False
             
-            # Extract LSBs
-            lsb = gray & 1
-            
-            # Check if the LSB distribution is suspicious
-            # In normal images, LSBs should be fairly random (around 50% zeros and 50% ones)
-            zero_count = np.sum(lsb == 0)
-            one_count = np.sum(lsb == 1)
-            total_pixels = gray.size
-            
-            zero_ratio = zero_count / total_pixels
-            one_ratio = one_count / total_pixels
-            
-            # If the distribution is too skewed, it might indicate steganography
-            if abs(zero_ratio - 0.5) > 0.05 or abs(one_ratio - 0.5) > 0.05:
-                return True
+            for idx, channel in enumerate(channels):
+                # Apply chi-square attack on the channel data
+                flattened = channel.flatten()
+                chi2_stat, p_value, is_stego_likely = chi_square_attack_lsb(flattened, sample_size=10000)
                 
-            # Additional check: look for patterns in the LSB plane
-            # Calculate horizontal and vertical differences
-            h_diff = np.abs(np.diff(lsb, axis=1))
-            v_diff = np.abs(np.diff(lsb, axis=0))
-            
-            h_changes = np.sum(h_diff)
-            v_changes = np.sum(v_diff)
-            
-            # Calculate expected number of changes for random data
-            expected_changes = total_pixels * 0.5
-            
-            # If there are significantly fewer changes than expected, it might be steganography
-            if h_changes < expected_changes * 0.4 or v_changes < expected_changes * 0.4:
-                return True
+                # Use Sample Pair Analysis as a secondary method
+                spa_rate = sample_pair_analysis(flattened, sample_size=10000)
                 
-            return False
+                # Use RS Analysis as a third method
+                rs_rate, _, _, _, _, _ = rs_analysis(flattened, sample_size=1000)
+                
+                # Combine results for more accurate detection
+                # Consider it positive if any two methods indicate steganography
+                detection_count = sum([
+                    1 if is_stego_likely else 0,
+                    1 if spa_rate > 0.3 else 0,  # 30% embedding rate threshold for SPA
+                    1 if rs_rate > 0.2 else 0    # 20% embedding rate threshold for RS
+                ])
+                
+                if detection_count >= 2:  # At least 2 methods detect steganography
+                    stego_detected = True
+                    break
+            
+            return stego_detected
             
         except Exception as e:
             print(f"Error in LSB detection: {e}")
             return False
+    
+    def perform_detailed_analysis(self, file_path):
+        """
+        Perform detailed steganalysis on the image file
+        Returns a dictionary with analysis results
+        """
+        try:
+            # Load the image
+            img = cv2.imread(file_path)
+            if img is None:
+                return {"error": "Could not load image"}
+            
+            # Process each color channel separately
+            channels = cv2.split(img)
+            results = {}
+            
+            for idx, channel in enumerate(channels):
+                channel_name = ['Blue', 'Green', 'Red'][idx]
+                results[channel_name] = perform_detailed_analysis(channel)
+            
+            # Combine channel results for an overall assessment
+            combined_votes = sum(channel_data['overall']['detection_votes'] for channel_data in results.values())
+            max_votes = 3 * len(channels)  # 3 methods × number of channels
+            
+            results['combined'] = {
+                'is_stego_likely': combined_votes >= max_votes / 2,
+                'confidence': combined_votes / max_votes
+            }
+            
+            return results
+            
+        except Exception as e:
+            return {"error": str(e)}
     
     def _extract_lsb(self, file_path):
         """
